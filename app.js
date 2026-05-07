@@ -115,7 +115,7 @@ const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct
 const DAYS_LONG = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 
 // ── STATE ──────────────────────────────────────────────────────────────────
-let state = { user: null, projects: [], deliverables: [], events: [] };
+let state = { user: null, projects: [], deliverables: [], events: [], archivedDeliverables: [] };
 let calDate = new Date();
 let weekStart = getWeekStart(new Date());
 let selectedDay = null;
@@ -135,6 +135,7 @@ let selectedProjColor = 'blue';
 let selectedProjCategories = [];
 let selectedDelCategory = 'client';
 let editingEvtId = null;
+let showArchive = false;
 
 function loadHiddenProjects() {
   try { return new Set(JSON.parse(localStorage.getItem('spd:hidden') || '[]')); }
@@ -254,10 +255,11 @@ async function enterApp() {
 // ── DATA ───────────────────────────────────────────────────────────────────
 async function loadData() {
   showLoad(true);
-  const [pRes, dRes, eRes] = await Promise.all([
+  const [pRes, dRes, eRes, archRes] = await Promise.all([
     sb.from('projects').select('*').order('position'),
     sb.from('deliverables').select('*').eq('archived', false).order('due_at'),
     sb.from('events').select('*').order('event_date'),
+    sb.from('deliverables').select('*').eq('archived', true).order('created_at', { ascending: false }),
   ]);
   showLoad(false);
 
@@ -268,9 +270,10 @@ async function loadData() {
   }
 
   hideSetupModal();
-  state.projects    = pRes.data || [];
-  state.deliverables = dRes.data || [];
-  state.events      = eRes.data || [];
+  state.projects             = pRes.data || [];
+  state.deliverables         = dRes.data || [];
+  state.events               = eRes.data || [];
+  state.archivedDeliverables = archRes.data || [];
   render();
 }
 function showLoad(on) { document.getElementById('loading').classList.toggle('show', on); }
@@ -315,6 +318,37 @@ async function deleteDeliverable(id) {
   if (!confirm('Delete this deliverable?')) return;
   await sb.from('deliverables').delete().eq('id', id);
   state.deliverables = state.deliverables.filter(d => d.id !== id);
+  state.archivedDeliverables = state.archivedDeliverables.filter(d => d.id !== id);
+  render();
+}
+async function archiveDeliverable(id) {
+  const { error } = await sb.from('deliverables').update({ archived: true }).eq('id', id);
+  if (error) { alert(error.message); return; }
+  const d = state.deliverables.find(d => d.id === id);
+  if (d) {
+    state.archivedDeliverables.unshift({ ...d, archived: true });
+    state.deliverables = state.deliverables.filter(d => d.id !== id);
+  }
+  render();
+}
+async function archiveAllDone(projectId) {
+  const doneItems = state.deliverables.filter(d => d.project_id === projectId && d.status === 'done');
+  if (doneItems.length === 0) return;
+  const ids = doneItems.map(d => d.id);
+  const { error } = await sb.from('deliverables').update({ archived: true }).in('id', ids);
+  if (error) { alert(error.message); return; }
+  state.archivedDeliverables = [...doneItems.map(d => ({ ...d, archived: true })), ...state.archivedDeliverables];
+  state.deliverables = state.deliverables.filter(d => !ids.includes(d.id));
+  render();
+}
+async function unarchiveDeliverable(id) {
+  const { error } = await sb.from('deliverables').update({ archived: false }).eq('id', id);
+  if (error) { alert(error.message); return; }
+  const d = state.archivedDeliverables.find(d => d.id === id);
+  if (d) {
+    state.deliverables.push({ ...d, archived: false });
+    state.archivedDeliverables = state.archivedDeliverables.filter(d => d.id !== id);
+  }
   render();
 }
 async function createEvent(data) {
@@ -896,24 +930,34 @@ function buildUpcomingItem(del) {
 }
 
 // ── PROJECTS PAGE ──────────────────────────────────────────────────────────
+const DEL_STATUS_ORDER = ['blocked', 'in_progress', 'review', 'not_started'];
+
 function renderProjectsPage() {
   const grid = document.getElementById('proj-cards-grid');
   grid.innerHTML = '';
 
+  // Remove stale archive panel
+  const old = document.getElementById('archive-panel');
+  if (old) old.remove();
+
   if (state.projects.length === 0) {
     grid.innerHTML = '<div class="pp-empty">No projects yet — click "+ New Project" to get started.</div>';
+    renderArchivePanel();
     return;
   }
 
   state.projects.forEach(p => {
     const col = colorOf(p);
     const sc  = STATUS_COLORS[p.status] || STATUS_COLORS.active;
-    const phases = getProjPhases(p);
-    const categories = getProjCategories(p);
     const team = getProjTeam(p);
-    const totalDels = state.deliverables.filter(d => d.project_id === p.id).length;
-    const doneDels  = state.deliverables.filter(d => d.project_id === p.id && d.status === 'done').length;
-    const progress  = totalDels > 0 ? Math.round((doneDels / totalDels) * 100) : 0;
+
+    const projDels  = state.deliverables.filter(d => d.project_id === p.id);
+    const activeDels = [...projDels.filter(d => d.status !== 'done')]
+      .sort((a, b) => DEL_STATUS_ORDER.indexOf(a.status) - DEL_STATUS_ORDER.indexOf(b.status));
+    const doneDels  = projDels.filter(d => d.status === 'done');
+    const totalDels = projDels.length;
+    const doneCount = doneDels.length;
+    const progress  = totalDels > 0 ? Math.round((doneCount / totalDels) * 100) : 0;
 
     const card = document.createElement('div');
     card.className = 'proj-card';
@@ -928,35 +972,45 @@ function renderProjectsPage() {
     // Header
     const hdr = document.createElement('div');
     hdr.className = 'proj-card-hdr';
+
     const nameBlock = document.createElement('div');
     const nameEl = document.createElement('div');
     nameEl.className = 'proj-card-name';
     nameEl.textContent = p.name;
-    const clientEl = document.createElement('div');
-    clientEl.className = 'proj-card-client';
-    clientEl.textContent = p.client_name || '';
     nameBlock.appendChild(nameEl);
-    if (p.client_name) nameBlock.appendChild(clientEl);
+    if (p.client_name) {
+      const clientEl = document.createElement('div');
+      clientEl.className = 'proj-card-client';
+      clientEl.textContent = p.client_name;
+      nameBlock.appendChild(clientEl);
+    }
 
-    const badges = document.createElement('div');
-    badges.className = 'proj-card-badges';
-    categories.forEach(cat => {
+    const topRight = document.createElement('div');
+    topRight.className = 'proj-card-top-right';
+    getProjCategories(p).forEach(cat => {
       const b = document.createElement('span');
       b.className = 'cat-badge';
       b.textContent = cat;
-      badges.appendChild(b);
+      topRight.appendChild(b);
     });
     const statusBadge = document.createElement('span');
     statusBadge.className = 'status-badge';
     statusBadge.style.cssText = `background:${sc.bg};color:${sc.color};`;
     statusBadge.textContent = p.status.charAt(0).toUpperCase() + p.status.slice(1);
-    badges.appendChild(statusBadge);
+    topRight.appendChild(statusBadge);
+    const editBtn = document.createElement('button');
+    editBtn.className = 'proj-card-edit';
+    editBtn.textContent = 'Edit';
+    editBtn.addEventListener('click', () => openProjModal(p));
+    topRight.appendChild(editBtn);
 
     hdr.appendChild(nameBlock);
-    hdr.appendChild(badges);
+    hdr.appendChild(topRight);
     body.appendChild(hdr);
 
-    // Current phase
+    // Phase + team row
+    const metaRow = document.createElement('div');
+    metaRow.className = 'proj-card-meta-row';
     if (p.phase) {
       const phaseEl = document.createElement('div');
       phaseEl.className = 'proj-card-phase';
@@ -965,66 +1019,227 @@ function renderProjectsPage() {
       lbl.textContent = 'Phase:';
       phaseEl.appendChild(lbl);
       phaseEl.appendChild(Object.assign(document.createElement('span'), { textContent: ' ' + p.phase }));
-      body.appendChild(phaseEl);
+      metaRow.appendChild(phaseEl);
     }
-
-    // Team
     if (team.length > 0) {
-      const teamSection = document.createElement('div');
-      teamSection.className = 'proj-card-team';
-      const teamLbl = document.createElement('div');
-      teamLbl.className = 'proj-team-lbl';
-      teamLbl.textContent = 'Team';
-      teamSection.appendChild(teamLbl);
-      team.forEach(member => {
-        const row = document.createElement('div');
-        row.className = 'team-member-row';
+      const avatarRow = document.createElement('div');
+      avatarRow.className = 'proj-card-avatars';
+      team.slice(0, 6).forEach(member => {
         const av = document.createElement('div');
-        av.className = 'team-av';
+        av.className = 'team-av-sm';
         const avColor = getAvatarColor(member.name);
         av.style.cssText = `background:${avColor}22;border-color:${avColor}55;color:${avColor};`;
         av.textContent = initials(member.name);
-        const info = document.createElement('div');
-        const nameSpan = document.createElement('div');
-        nameSpan.className = 'team-member-name';
-        nameSpan.textContent = member.name;
-        const roleSpan = document.createElement('div');
-        roleSpan.className = 'team-member-role';
-        roleSpan.textContent = member.role || '';
-        info.appendChild(nameSpan);
-        if (member.role) info.appendChild(roleSpan);
-        row.appendChild(av);
-        row.appendChild(info);
-        teamSection.appendChild(row);
+        av.title = member.name + (member.role ? ` — ${member.role}` : '');
+        avatarRow.appendChild(av);
       });
-      body.appendChild(teamSection);
+      if (team.length > 6) {
+        const more = document.createElement('div');
+        more.className = 'team-av-sm team-av-more';
+        more.textContent = `+${team.length - 6}`;
+        avatarRow.appendChild(more);
+      }
+      metaRow.appendChild(avatarRow);
+    }
+    if (metaRow.children.length > 0) body.appendChild(metaRow);
+
+    // Deliverables section
+    if (activeDels.length > 0 || doneDels.length > 0) {
+      const delSection = document.createElement('div');
+      delSection.className = 'proj-del-section';
+
+      if (activeDels.length > 0) {
+        // Status summary badges
+        const summaryRow = document.createElement('div');
+        summaryRow.className = 'proj-del-summary';
+        const groups = {};
+        activeDels.forEach(d => { groups[d.status] = (groups[d.status] || 0) + 1; });
+        DEL_STATUS_ORDER.forEach(s => {
+          if (!groups[s]) return;
+          const badge = document.createElement('span');
+          badge.className = 'del-status-summary-badge';
+          badge.style.cssText = `background:${STATUSES[s].color}20;color:${STATUSES[s].color};border:1px solid ${STATUSES[s].color}40;`;
+          badge.textContent = `${groups[s]} ${STATUSES[s].label}`;
+          summaryRow.appendChild(badge);
+        });
+        delSection.appendChild(summaryRow);
+
+        activeDels.forEach(d => delSection.appendChild(buildProjDelRow(d)));
+      }
+
+      if (doneDels.length > 0) {
+        const doneHdr = document.createElement('div');
+        doneHdr.className = 'proj-del-done-hdr';
+        const doneLabel = document.createElement('span');
+        doneLabel.className = 'proj-del-done-label';
+        doneLabel.textContent = `${doneCount} Completed`;
+        const archAllBtn = document.createElement('button');
+        archAllBtn.className = 'proj-archive-btn';
+        archAllBtn.textContent = 'Archive all';
+        archAllBtn.addEventListener('click', () => archiveAllDone(p.id));
+        doneHdr.appendChild(doneLabel);
+        doneHdr.appendChild(archAllBtn);
+        delSection.appendChild(doneHdr);
+        doneDels.forEach(d => delSection.appendChild(buildProjDelRow(d, true)));
+      }
+
+      body.appendChild(delSection);
     }
 
-    // Footer: deliverable progress
+    // Footer: progress bar
     const footer = document.createElement('div');
     footer.className = 'proj-card-footer';
     const statsEl = document.createElement('div');
     statsEl.className = 'proj-del-stats';
-    statsEl.textContent = `${doneDels}/${totalDels} deliverables`;
+    statsEl.textContent = `${doneCount}/${totalDels} deliverables`;
     const bar = document.createElement('div');
     bar.className = 'proj-del-bar';
     const fill = document.createElement('div');
     fill.className = 'proj-del-fill';
     fill.style.cssText = `width:${progress}%;background:${col.hex};`;
     bar.appendChild(fill);
-    const editBtn = document.createElement('button');
-    editBtn.className = 'proj-card-edit';
-    editBtn.textContent = 'Edit';
-    editBtn.addEventListener('click', () => openProjModal(p));
     footer.appendChild(statsEl);
     footer.appendChild(bar);
-    footer.appendChild(editBtn);
     body.appendChild(footer);
 
     card.appendChild(stripe);
     card.appendChild(body);
     grid.appendChild(card);
   });
+
+  renderArchivePanel();
+}
+
+function buildProjDelRow(d, isDone = false) {
+  const st = STATUSES[d.status] || STATUSES.not_started;
+  const row = document.createElement('div');
+  row.className = 'proj-del-row' + (isDone ? ' done' : '');
+  row.addEventListener('click', () => openDelModal(d));
+
+  const dot = document.createElement('div');
+  dot.className = 'proj-del-dot';
+  dot.style.background = st.color;
+  dot.title = st.label;
+
+  const title = document.createElement('div');
+  title.className = 'proj-del-row-title';
+  title.textContent = d.title;
+
+  const meta = document.createElement('div');
+  meta.className = 'proj-del-row-meta';
+  if (d.assignee) {
+    const a = document.createElement('span');
+    a.className = 'proj-del-row-assignee';
+    a.textContent = d.assignee;
+    meta.appendChild(a);
+  }
+  if (d.due_at) {
+    const dEl = document.createElement('span');
+    dEl.className = 'proj-del-row-due' + (isOverdue(d.due_at) && !isDone ? ' overdue' : '');
+    dEl.textContent = formatShort(d.due_at);
+    meta.appendChild(dEl);
+  }
+
+  row.appendChild(dot);
+  row.appendChild(title);
+  row.appendChild(meta);
+
+  if (!isDone) {
+    const archBtn = document.createElement('button');
+    archBtn.className = 'proj-del-arch-btn';
+    archBtn.textContent = '↓';
+    archBtn.title = 'Archive';
+    archBtn.addEventListener('click', e => { e.stopPropagation(); archiveDeliverable(d.id); });
+    row.appendChild(archBtn);
+  }
+
+  return row;
+}
+
+function renderArchivePanel() {
+  const ppBody = document.querySelector('.pp-body');
+  const panel = document.createElement('div');
+  panel.id = 'archive-panel';
+  panel.className = 'archive-panel';
+
+  const totalArchived = state.archivedDeliverables.length;
+
+  const hdr = document.createElement('div');
+  hdr.className = 'archive-panel-hdr';
+  const hdrLeft = document.createElement('span');
+  hdrLeft.innerHTML = `Archived <span class="archive-count">${totalArchived}</span>`;
+  const hdrIcon = document.createElement('span');
+  hdrIcon.className = 'archive-toggle-icon';
+  hdrIcon.textContent = showArchive ? '▲' : '▼';
+  hdr.appendChild(hdrLeft);
+  hdr.appendChild(hdrIcon);
+  hdr.addEventListener('click', () => { showArchive = !showArchive; renderProjectsPage(); });
+  panel.appendChild(hdr);
+
+  if (showArchive) {
+    const body = document.createElement('div');
+    body.className = 'archive-panel-body';
+
+    if (totalArchived === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'archive-empty';
+      empty.textContent = 'No archived deliverables.';
+      body.appendChild(empty);
+    } else {
+      const byProject = {};
+      state.archivedDeliverables.forEach(d => {
+        const key = d.project_id || '__none__';
+        if (!byProject[key]) byProject[key] = [];
+        byProject[key].push(d);
+      });
+
+      Object.entries(byProject).forEach(([projId, dels]) => {
+        const proj = state.projects.find(p => p.id === projId);
+        const col = colorOf(proj);
+        const group = document.createElement('div');
+        group.className = 'archive-proj-group';
+
+        const groupHdr = document.createElement('div');
+        groupHdr.className = 'archive-proj-name';
+        const dot = document.createElement('div');
+        dot.className = 'archive-proj-dot';
+        dot.style.background = col.hex;
+        groupHdr.appendChild(dot);
+        groupHdr.appendChild(Object.assign(document.createElement('span'), { textContent: proj?.name || 'No Project' }));
+        group.appendChild(groupHdr);
+
+        dels.forEach(d => {
+          const row = document.createElement('div');
+          row.className = 'archive-del-row';
+
+          const titleEl = document.createElement('span');
+          titleEl.className = 'archive-del-title';
+          titleEl.textContent = d.title;
+
+          const metaEl = document.createElement('span');
+          metaEl.className = 'archive-del-meta';
+          metaEl.textContent = [d.assignee, d.due_at ? formatShort(d.due_at) : ''].filter(Boolean).join(' · ');
+
+          const unarchBtn = document.createElement('button');
+          unarchBtn.className = 'archive-unarch-btn';
+          unarchBtn.textContent = 'Restore';
+          unarchBtn.title = 'Unarchive';
+          unarchBtn.addEventListener('click', e => { e.stopPropagation(); unarchiveDeliverable(d.id); });
+
+          row.appendChild(titleEl);
+          if (metaEl.textContent) row.appendChild(metaEl);
+          row.appendChild(unarchBtn);
+          group.appendChild(row);
+        });
+
+        body.appendChild(group);
+      });
+    }
+
+    panel.appendChild(body);
+  }
+
+  ppBody.appendChild(panel);
 }
 
 // ── CONTEXT MENU ───────────────────────────────────────────────────────────
