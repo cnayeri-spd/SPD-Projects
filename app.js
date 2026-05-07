@@ -144,10 +144,36 @@ function loadHiddenProjects() {
 function saveHiddenProjects() {
   localStorage.setItem('spd:hidden', JSON.stringify([...hiddenProjects]));
 }
+function loadLocalProjOrder() {
+  try { return JSON.parse(localStorage.getItem('spd:proj-order') || 'null'); }
+  catch { return null; }
+}
+function saveLocalProjOrder(ids) { localStorage.setItem('spd:proj-order', JSON.stringify(ids)); }
+function loadLocalProjColors() {
+  try { return JSON.parse(localStorage.getItem('spd:proj-colors') || '{}'); }
+  catch { return {}; }
+}
+function saveLocalProjColors(map) { localStorage.setItem('spd:proj-colors', JSON.stringify(map)); }
+
+let localProjColors = loadLocalProjColors();
+let ppDragId = null;
+
+function getSortedProjects() {
+  const order = loadLocalProjOrder();
+  if (!order || !order.length) return [...state.projects];
+  return [...state.projects].sort((a, b) => {
+    const ia = order.indexOf(a.id), ib = order.indexOf(b.id);
+    if (ia === -1 && ib === -1) return 0;
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+}
 
 // ── HELPERS ────────────────────────────────────────────────────────────────
 function colorOf(proj) {
-  return PROJECT_COLORS.find(c => c.key === proj?.color) || PROJECT_COLORS.find(c => c.key === 'blue');
+  const key = (proj?.id && localProjColors[proj.id]) || proj?.color;
+  return PROJECT_COLORS.find(c => c.key === key) || PROJECT_COLORS.find(c => c.key === 'blue');
 }
 function dateToStr(d) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -410,7 +436,7 @@ function renderSidebar() {
     list.appendChild(e);
   }
 
-  state.projects.forEach(p => {
+  getSortedProjects().forEach(p => {
     const col = colorOf(p);
     const item = document.createElement('div');
     item.className = 'proj-item' + (hiddenProjects.has(p.id) ? ' proj-hidden' : '');
@@ -946,7 +972,7 @@ function renderProjectsPage() {
     return;
   }
 
-  state.projects.forEach(p => {
+  getSortedProjects().forEach(p => {
     const col = colorOf(p);
     const sc  = STATUS_COLORS[p.status] || STATUS_COLORS.active;
     const team = getProjTeam(p);
@@ -961,6 +987,42 @@ function renderProjectsPage() {
 
     const card = document.createElement('div');
     card.className = 'proj-card';
+    card.draggable = true;
+    card.dataset.projId = p.id;
+    card.addEventListener('dragstart', e => {
+      ppDragId = p.id;
+      e.dataTransfer.effectAllowed = 'move';
+      setTimeout(() => card.classList.add('pp-dragging'), 0);
+    });
+    card.addEventListener('dragend', () => {
+      card.classList.remove('pp-dragging');
+      document.querySelectorAll('.proj-card.pp-drag-over').forEach(c => c.classList.remove('pp-drag-over'));
+      ppDragId = null;
+    });
+    card.addEventListener('dragover', e => {
+      if (!ppDragId || ppDragId === p.id) return;
+      e.preventDefault();
+      document.querySelectorAll('.proj-card.pp-drag-over').forEach(c => c.classList.remove('pp-drag-over'));
+      card.classList.add('pp-drag-over');
+    });
+    card.addEventListener('dragleave', e => {
+      if (!card.contains(e.relatedTarget)) card.classList.remove('pp-drag-over');
+    });
+    card.addEventListener('drop', e => {
+      e.preventDefault();
+      card.classList.remove('pp-drag-over');
+      if (!ppDragId || ppDragId === p.id) return;
+      const sorted = getSortedProjects();
+      const ids = sorted.map(q => q.id);
+      const fromIdx = ids.indexOf(ppDragId);
+      const toIdx = ids.indexOf(p.id);
+      if (fromIdx === -1 || toIdx === -1) return;
+      ids.splice(fromIdx, 1);
+      ids.splice(toIdx, 0, ppDragId);
+      saveLocalProjOrder(ids);
+      ppDragId = null;
+      renderProjectsPage();
+    });
 
     const stripe = document.createElement('div');
     stripe.className = 'proj-card-stripe';
@@ -998,6 +1060,12 @@ function renderProjectsPage() {
     statusBadge.style.cssText = `background:${sc.bg};color:${sc.color};`;
     statusBadge.textContent = p.status.charAt(0).toUpperCase() + p.status.slice(1);
     topRight.appendChild(statusBadge);
+    const colorBtn = document.createElement('button');
+    colorBtn.className = 'proj-card-color-btn';
+    colorBtn.style.background = col.hex;
+    colorBtn.title = 'Change color (local only)';
+    colorBtn.addEventListener('click', e => { e.stopPropagation(); openLocalColorPicker(e.currentTarget, p.id, col.key); });
+    topRight.appendChild(colorBtn);
     const editBtn = document.createElement('button');
     editBtn.className = 'proj-card-edit';
     editBtn.textContent = 'Edit';
@@ -1156,6 +1224,43 @@ function buildProjDelRow(d, isDone = false) {
   return row;
 }
 
+function openLocalColorPicker(anchor, projId, currentKey) {
+  const existing = document.getElementById('local-color-popover');
+  const wasOpen = existing?.dataset.projId === projId;
+  existing?.remove();
+  if (wasOpen) return;
+
+  const pop = document.createElement('div');
+  pop.id = 'local-color-popover';
+  pop.dataset.projId = projId;
+  pop.className = 'local-color-popover';
+
+  PROJECT_COLORS.forEach(c => {
+    const sw = document.createElement('div');
+    sw.className = 'lcp-swatch' + (c.key === (localProjColors[projId] || currentKey) ? ' sel' : '');
+    sw.style.background = c.hex;
+    sw.title = c.key;
+    sw.addEventListener('click', e => {
+      e.stopPropagation();
+      localProjColors[projId] = c.key;
+      saveLocalProjColors(localProjColors);
+      pop.remove();
+      render();
+    });
+    pop.appendChild(sw);
+  });
+
+  const rect = anchor.getBoundingClientRect();
+  pop.style.cssText = `position:fixed;top:${rect.bottom + 4}px;left:${Math.min(rect.left, window.innerWidth - 230)}px;z-index:9000;`;
+  document.body.appendChild(pop);
+
+  setTimeout(() => {
+    document.addEventListener('click', function close(e) {
+      if (!pop.contains(e.target)) { pop.remove(); document.removeEventListener('click', close); }
+    });
+  }, 10);
+}
+
 function renderArchivePanel() {
   const ppBody = document.querySelector('.pp-body');
   const panel = document.createElement('div');
@@ -1283,7 +1388,7 @@ function openProjModal(proj) {
   document.getElementById('pm-status').value = proj?.status || 'active';
   document.getElementById('pm-delete').style.display = proj ? 'block' : 'none';
 
-  selectedProjColor      = proj?.color || 'blue';
+  selectedProjColor      = proj?.color || PROJECT_COLORS[Math.floor(Math.random() * PROJECT_COLORS.length)].key;
   selectedProjCategories = [...getProjCategories(proj)];
   editingPhases = JSON.parse(JSON.stringify(getProjPhases(proj)));
   editingTeam   = JSON.parse(JSON.stringify(getProjTeam(proj)));
@@ -1645,7 +1750,7 @@ function setView(v) {
 }
 document.getElementById('view-month-btn').addEventListener('click', () => setView('month'));
 document.getElementById('view-2wk-btn').addEventListener('click', () => {
-  weekStart = selectedDay ? getWeekStart(parseDate(selectedDay)) : getWeekStart(new Date());
+  weekStart = getWeekStart(new Date());
   setView('twoweek');
 });
 document.getElementById('view-week-btn').addEventListener('click', () => {
