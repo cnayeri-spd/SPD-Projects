@@ -1664,7 +1664,6 @@ function openDelModal(del) {
   if (!del && state.projects.length === 1) sel.value = state.projects[0].id;
 
   buildDelCategoryRadio();
-  attachMemberAutocomplete(document.getElementById('dm-assignee'));
 
   document.getElementById('del-modal').classList.add('open');
   document.getElementById('dm-title').focus();
@@ -1975,54 +1974,60 @@ document.getElementById('mm-save').addEventListener('click', async () => {
 
 // ── MEMBER AUTOCOMPLETE ────────────────────────────────────────────────────
 function attachMemberAutocomplete(input) {
+  if (input._acAttached) return; // prevent duplicate listeners
+  input._acAttached = true;
+
   let dropdown = null;
   const remove = () => { dropdown?.remove(); dropdown = null; };
+
   const show = q => {
     remove();
     const lower = q.toLowerCase();
     const matches = state.teamMembers
       .filter(m => !q || m.name.toLowerCase().includes(lower))
-      .slice(0, 8);
+      .slice(0, 10);
     if (!matches.length) return;
+
     dropdown = document.createElement('div');
     dropdown.className = 'ac-dropdown';
     const rect = input.getBoundingClientRect();
-    dropdown.style.cssText = `position:fixed;top:${rect.bottom + 2}px;left:${rect.left}px;width:${Math.max(rect.width, 220)}px;z-index:9500;`;
-    const showEmoji = localStorage.getItem('spd:show-emoji') === 'true';
+    dropdown.style.cssText = `position:fixed;top:${rect.bottom + 2}px;left:${rect.left}px;min-width:${rect.width}px;z-index:9500;`;
+
     matches.forEach(m => {
+      const col = PROJECT_COLORS.find(c => c.key === m.color) || PROJECT_COLORS[5];
       const item = document.createElement('div');
       item.className = 'ac-item';
-      const col = PROJECT_COLORS.find(c => c.key === m.color) || PROJECT_COLORS[5];
-      const av = document.createElement('div');
-      av.className = 'ac-av';
-      av.style.cssText = `background:${col.hex}22;border:1px solid ${col.hex}55;color:${col.hex};font-size:${(showEmoji && m.emoji) ? '16px' : '10px'};`;
-      av.textContent = (showEmoji && m.emoji) ? m.emoji : initials(m.name);
-      const info = document.createElement('div');
-      info.className = 'ac-info';
-      const nameEl = document.createElement('div');
+
+      const nameEl = document.createElement('span');
       nameEl.className = 'ac-name';
+      nameEl.style.color = col.hex;
       nameEl.textContent = m.name;
-      info.appendChild(nameEl);
+      item.appendChild(nameEl);
+
       if (m.title) {
-        const sub = document.createElement('div');
-        sub.className = 'ac-sub';
-        sub.textContent = m.title;
-        info.appendChild(sub);
+        const titleEl = document.createElement('span');
+        titleEl.className = 'ac-title-inline';
+        titleEl.textContent = m.title;
+        item.appendChild(titleEl);
       }
-      item.appendChild(av);
-      item.appendChild(info);
+
       item.addEventListener('mousedown', e => {
         e.preventDefault();
         input.value = m.name;
+        input.dispatchEvent(new Event('input'));
         remove();
+        input.focus();
       });
       dropdown.appendChild(item);
     });
+
     document.body.appendChild(dropdown);
   };
-  input.addEventListener('input', () => show(input.value.trim()));
-  input.addEventListener('focus', () => show(input.value.trim()));
-  input.addEventListener('blur', () => setTimeout(remove, 150));
+
+  input.addEventListener('input',  () => show(input.value.trim()));
+  input.addEventListener('focus',  () => show(input.value.trim()));
+  input.addEventListener('blur',   () => setTimeout(remove, 120));
+  input.addEventListener('keydown', e => { if (e.key === 'Escape') remove(); });
 }
 
 // ── SETUP MODAL ────────────────────────────────────────────────────────────
@@ -2045,6 +2050,8 @@ function hideSetupModal() { document.getElementById('setup-modal').classList.rem
 setInterval(() => { if (state.user) render(); }, 300000);
 
 // ── INIT ───────────────────────────────────────────────────────────────────
+attachMemberAutocomplete(document.getElementById('dm-assignee'));
+
 (async () => {
   const { data: { session } } = await sb.auth.getSession();
   if (session) { state.user = session.user; await enterApp(); }
