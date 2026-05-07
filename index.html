@@ -364,6 +364,45 @@ html,body{background:var(--bg);color:var(--text);font-family:'Inter',-apple-syst
 
 /* ── SECTION DIVIDER ── */
 .modal-section-label{font-size:10px;font-weight:600;color:var(--text-dim);letter-spacing:.6px;text-transform:uppercase;margin-bottom:8px;margin-top:4px;padding-bottom:5px;border-bottom:1px solid var(--border);}
+
+/* ── SETTINGS PAGE ── */
+#settings-page{display:none;flex:1;flex-direction:column;overflow:hidden;background:var(--bg);}
+#settings-page.show{display:flex;}
+.settings-body{display:flex;flex-direction:column;gap:0;max-width:680px;}
+.settings-section{padding:24px 0 8px;}
+.settings-section-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+.settings-section-title{font-size:13px;font-weight:600;color:var(--text);letter-spacing:-.2px;}
+.settings-divider{height:1px;background:var(--border);margin:8px 0;}
+.settings-empty{color:var(--text-dim);font-size:13px;padding:12px 0;}
+
+/* ── TEAM MEMBER LIST ── */
+.member-list{display:flex;flex-direction:column;gap:2px;}
+.member-row{display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:var(--radius);transition:background .1s;border:1px solid transparent;}
+.member-row:hover{background:var(--surface);border-color:var(--border);}
+.member-av{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;flex:0 0 38px;}
+.member-info{flex:1;min-width:0;}
+.member-name{font-size:13px;font-weight:500;color:var(--text);}
+.member-sub{font-size:11px;color:var(--text-muted);margin-top:2px;}
+.member-actions{flex:0 0 auto;}
+
+/* ── PREFERENCES ── */
+.pref-row{display:flex;align-items:flex-start;gap:14px;padding:10px 12px;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface);}
+.pref-toggle{flex:0 0 42px;height:24px;border-radius:12px;border:none;background:var(--surface-3);color:var(--text-dim);font-family:inherit;font-size:10px;font-weight:700;cursor:pointer;transition:all .2s;letter-spacing:.5px;}
+.pref-toggle.on{background:var(--accent);color:#fff;}
+.pref-label{font-size:13px;color:var(--text);font-weight:500;}
+.pref-sub{font-size:11px;color:var(--text-muted);margin-top:3px;line-height:1.5;}
+
+/* ── MEMBER AUTOCOMPLETE ── */
+.ac-dropdown{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,.5);}
+.ac-item{display:flex;align-items:center;gap:9px;padding:7px 10px;cursor:pointer;transition:background .1s;}
+.ac-item:hover{background:var(--surface-3);}
+.ac-av{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;flex:0 0 28px;}
+.ac-info{flex:1;min-width:0;}
+.ac-name{font-size:12px;font-weight:500;color:var(--text);}
+.ac-sub{font-size:10px;color:var(--text-muted);margin-top:1px;}
+
+/* ── TEAM MEMBER MODAL ── */
+.mm-emoji-input{font-size:22px;text-align:center;padding:5px 10px;}
 </style>
 </head>
 <body>
@@ -401,6 +440,8 @@ html,body{background:var(--bg);color:var(--text);font-family:'Inter',-apple-syst
       </div>
       <div class="vdivider"></div>
       <button class="icon-btn" id="view-projects-btn">Projects</button>
+      <div class="vdivider"></div>
+      <button class="icon-btn" id="view-settings-btn">Settings</button>
     </div>
     <div class="top-bar-right">
       <div class="user-chip">
@@ -461,6 +502,14 @@ html,body{background:var(--bg);color:var(--text);font-family:'Inter',-apple-syst
           <button class="btn-primary" id="pp-add-btn">+ New Project</button>
         </div>
         <div class="pp-body"><div class="proj-cards-grid" id="proj-cards-grid"></div></div>
+      </div>
+
+      <!-- SETTINGS PAGE -->
+      <div id="settings-page">
+        <div class="pp-header">
+          <div class="pp-title">Settings</div>
+        </div>
+        <div class="pp-body"><div class="settings-body" id="settings-body"></div></div>
       </div>
     </div>
 
@@ -593,6 +642,28 @@ html,body{background:var(--bg);color:var(--text);font-family:'Inter',-apple-syst
       <button class="btn-danger" id="em-delete" style="display:none;">Delete</button>
       <button class="btn-ghost" id="em-cancel">Cancel</button>
       <button class="btn-primary" id="em-save">Save Event</button>
+    </div>
+  </div>
+</div>
+
+<!-- TEAM MEMBER MODAL -->
+<div id="member-modal" class="modal-bg">
+  <div class="modal modal-sm">
+    <button class="modal-x" id="member-modal-x">×</button>
+    <div class="modal-title" id="member-modal-title">New Team Member</div>
+    <div class="fg-row">
+      <div class="fg"><label class="flabel">Name *</label><input class="finput" id="mm-name" placeholder="Full name"/></div>
+      <div class="fg"><label class="flabel">Title / Role</label><input class="finput" id="mm-title" placeholder="Designer, PM..."/></div>
+    </div>
+    <div class="fg"><label class="flabel">Email</label><input class="finput" type="email" id="mm-email" placeholder="name@company.com"/></div>
+    <div class="fg-row">
+      <div class="fg"><label class="flabel">Color</label><div class="color-row" id="mm-color-row"></div></div>
+      <div class="fg" style="max-width:100px;"><label class="flabel">Emoji</label><input class="finput mm-emoji-input" id="mm-emoji" placeholder="😀" maxlength="2"/></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-danger" id="mm-delete" style="display:none;">Delete</button>
+      <button class="btn-ghost" id="mm-cancel">Cancel</button>
+      <button class="btn-primary" id="mm-save">Save</button>
     </div>
   </div>
 </div>

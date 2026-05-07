@@ -57,6 +57,19 @@ create policy "team_events" on events
   for all to authenticated using (true) with check (true);
 
 
+create table if not exists team_members (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz default now(),
+  name text not null,
+  title text default '',
+  email text default '',
+  color text default 'blue',
+  emoji text default ''
+);
+alter table team_members enable row level security;
+create policy "team_team_members" on team_members
+  for all to authenticated using (true) with check (true);
+
 -- ── MIGRATION (only if you already ran an earlier version) ────────────────
 -- Uncomment and run these if the tables exist without the new columns:
 

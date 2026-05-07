@@ -60,6 +60,19 @@ create policy "team_deliverables" on deliverables
 create policy "team_events" on events
   for all to authenticated using (true) with check (true);
 
+create table if not exists team_members (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz default now(),
+  name text not null,
+  title text default '',
+  email text default '',
+  color text default 'blue',
+  emoji text default ''
+);
+alter table team_members enable row level security;
+create policy "team_team_members" on team_members
+  for all to authenticated using (true) with check (true);
+
 -- Run this block if you already created the tables without the new columns:
 -- alter table projects add column if not exists categories text[] default '{}';
 -- alter table projects add column if not exists phases jsonb default '[]';
@@ -115,7 +128,7 @@ const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct
 const DAYS_LONG = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 
 // ── STATE ──────────────────────────────────────────────────────────────────
-let state = { user: null, projects: [], deliverables: [], events: [], archivedDeliverables: [] };
+let state = { user: null, projects: [], deliverables: [], events: [], archivedDeliverables: [], teamMembers: [] };
 let calDate = new Date();
 let weekStart = getWeekStart(new Date());
 let selectedDay = null;
@@ -135,6 +148,8 @@ let selectedProjColor = 'blue';
 let selectedProjCategories = [];
 let selectedDelCategory = 'client';
 let editingEvtId = null;
+let editingMemberId = null;
+let selectedMemberColor = 'blue';
 let showArchive = false;
 
 function loadHiddenProjects() {
@@ -174,6 +189,15 @@ function getSortedProjects() {
 function colorOf(proj) {
   const key = (proj?.id && localProjColors[proj.id]) || proj?.color;
   return PROJECT_COLORS.find(c => c.key === key) || PROJECT_COLORS.find(c => c.key === 'blue');
+}
+function getAvatarInfo(name) {
+  const member = state.teamMembers.find(m => m.name === name);
+  const showEmoji = localStorage.getItem('spd:show-emoji') === 'true';
+  if (member) {
+    const col = PROJECT_COLORS.find(c => c.key === member.color) || PROJECT_COLORS[5];
+    return { hex: col.hex, text: (showEmoji && member.emoji) ? member.emoji : initials(name) };
+  }
+  return { hex: getAvatarColor(name), text: initials(name) };
 }
 function dateToStr(d) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -281,11 +305,12 @@ async function enterApp() {
 // ── DATA ───────────────────────────────────────────────────────────────────
 async function loadData() {
   showLoad(true);
-  const [pRes, dRes, eRes, archRes] = await Promise.all([
+  const [pRes, dRes, eRes, archRes, tmRes] = await Promise.all([
     sb.from('projects').select('*').order('position'),
     sb.from('deliverables').select('*').eq('archived', false).order('due_at'),
     sb.from('events').select('*').order('event_date'),
     sb.from('deliverables').select('*').eq('archived', true).order('created_at', { ascending: false }),
+    sb.from('team_members').select('*').order('name'),
   ]);
   showLoad(false);
 
@@ -300,6 +325,7 @@ async function loadData() {
   state.deliverables         = dRes.data || [];
   state.events               = eRes.data || [];
   state.archivedDeliverables = archRes.data || [];
+  state.teamMembers          = tmRes.data || [];
   render();
 }
 function showLoad(on) { document.getElementById('loading').classList.toggle('show', on); }
@@ -402,21 +428,45 @@ async function updateDeliverableDate(id, due_at) {
   if (d) d.due_at = due_at;
   render();
 }
+async function createTeamMember(data) {
+  const { data: row, error } = await sb.from('team_members').insert(data).select().single();
+  if (error) { alert(error.message); return; }
+  state.teamMembers.push(row);
+  state.teamMembers.sort((a, b) => a.name.localeCompare(b.name));
+  render();
+}
+async function updateTeamMember(id, data) {
+  const { error } = await sb.from('team_members').update(data).eq('id', id);
+  if (error) { alert(error.message); return; }
+  const m = state.teamMembers.find(m => m.id === id);
+  if (m) Object.assign(m, data);
+  render();
+}
+async function deleteTeamMember(id) {
+  if (!confirm('Delete this team member?')) return;
+  await sb.from('team_members').delete().eq('id', id);
+  state.teamMembers = state.teamMembers.filter(m => m.id !== id);
+  render();
+}
 
 // ── RENDER ─────────────────────────────────────────────────────────────────
 function render() {
   renderSidebar();
-  const inProjects = currentView === 'projects';
-  document.getElementById('right-panel').style.display = inProjects ? 'none' : '';
-  document.getElementById('cal-header').style.display = inProjects ? 'none' : '';
+  const noCalendar = currentView === 'projects' || currentView === 'settings';
+  document.getElementById('right-panel').style.display = noCalendar ? 'none' : '';
+  document.getElementById('cal-header').style.display  = noCalendar ? 'none' : '';
+  document.getElementById('cal-grid-wrap').style.display = 'none';
+  document.getElementById('week-wrap').classList.remove('show');
+  document.getElementById('projects-page').classList.remove('show');
+  document.getElementById('settings-page').classList.remove('show');
 
-  if (inProjects) {
-    document.getElementById('cal-grid-wrap').style.display = 'none';
-    document.getElementById('week-wrap').classList.remove('show');
+  if (currentView === 'projects') {
     document.getElementById('projects-page').classList.add('show');
     renderProjectsPage();
+  } else if (currentView === 'settings') {
+    document.getElementById('settings-page').classList.add('show');
+    renderSettingsPage();
   } else {
-    document.getElementById('projects-page').classList.remove('show');
     if (currentView === 'month')   renderMonthCalendar();
     if (currentView === 'twoweek') renderTwoWeekView();
     if (currentView === 'week')    renderWeekView();
@@ -1093,11 +1143,13 @@ function renderProjectsPage() {
       const avatarRow = document.createElement('div');
       avatarRow.className = 'proj-card-avatars';
       team.slice(0, 6).forEach(member => {
+        const ai = getAvatarInfo(member.name);
+        const showEmoji = localStorage.getItem('spd:show-emoji') === 'true';
+        const isEmoji = showEmoji && state.teamMembers.find(m => m.name === member.name)?.emoji;
         const av = document.createElement('div');
         av.className = 'team-av-sm';
-        const avColor = getAvatarColor(member.name);
-        av.style.cssText = `background:${avColor}22;border-color:${avColor}55;color:${avColor};`;
-        av.textContent = initials(member.name);
+        av.style.cssText = `background:${ai.hex}22;border-color:${ai.hex}55;color:${ai.hex};font-size:${isEmoji ? '14px' : '9px'};`;
+        av.textContent = ai.text;
         av.title = member.name + (member.role ? ` — ${member.role}` : '');
         avatarRow.appendChild(av);
       });
@@ -1531,6 +1583,7 @@ function addTeamRow(member, idx) {
   nameInput.value = member.name || '';
   nameInput.placeholder = 'Name';
   nameInput.addEventListener('input', () => { editingTeam[idx].name = nameInput.value; });
+  attachMemberAutocomplete(nameInput);
 
   const roleInput = document.createElement('input');
   roleInput.className = 'team-role-input';
@@ -1611,6 +1664,7 @@ function openDelModal(del) {
   if (!del && state.projects.length === 1) sel.value = state.projects[0].id;
 
   buildDelCategoryRadio();
+  attachMemberAutocomplete(document.getElementById('dm-assignee'));
 
   document.getElementById('del-modal').classList.add('open');
   document.getElementById('dm-title').focus();
@@ -1746,6 +1800,7 @@ function setView(v) {
   document.getElementById('view-2wk-btn').classList.toggle('active', v === 'twoweek');
   document.getElementById('view-week-btn').classList.toggle('active', v === 'week');
   document.getElementById('view-projects-btn').classList.toggle('active', v === 'projects');
+  document.getElementById('view-settings-btn').classList.toggle('active', v === 'settings');
   render();
 }
 document.getElementById('view-month-btn').addEventListener('click', () => setView('month'));
@@ -1758,6 +1813,217 @@ document.getElementById('view-week-btn').addEventListener('click', () => {
   setView('week');
 });
 document.getElementById('view-projects-btn').addEventListener('click', () => setView('projects'));
+document.getElementById('view-settings-btn').addEventListener('click', () => setView('settings'));
+
+// ── SETTINGS PAGE ──────────────────────────────────────────────────────────
+function renderSettingsPage() {
+  const body = document.getElementById('settings-body');
+  body.innerHTML = '';
+  const showEmoji = localStorage.getItem('spd:show-emoji') === 'true';
+
+  // Team Members
+  const tmSection = document.createElement('div');
+  tmSection.className = 'settings-section';
+  const tmHdr = document.createElement('div');
+  tmHdr.className = 'settings-section-hdr';
+  const tmTitle = document.createElement('div');
+  tmTitle.className = 'settings-section-title';
+  tmTitle.textContent = 'Team Members';
+  const tmAdd = document.createElement('button');
+  tmAdd.className = 'btn-primary';
+  tmAdd.style.fontSize = '12px';
+  tmAdd.textContent = '+ Add Member';
+  tmAdd.addEventListener('click', () => openMemberModal(null));
+  tmHdr.appendChild(tmTitle);
+  tmHdr.appendChild(tmAdd);
+  tmSection.appendChild(tmHdr);
+
+  if (state.teamMembers.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'settings-empty';
+    empty.textContent = 'No team members yet — add your first one.';
+    tmSection.appendChild(empty);
+  } else {
+    const list = document.createElement('div');
+    list.className = 'member-list';
+    state.teamMembers.forEach(m => {
+      const row = document.createElement('div');
+      row.className = 'member-row';
+      const col = PROJECT_COLORS.find(c => c.key === m.color) || PROJECT_COLORS[5];
+      const av = document.createElement('div');
+      av.className = 'member-av';
+      av.style.cssText = `background:${col.hex}22;border:1px solid ${col.hex}55;color:${col.hex};font-size:${(showEmoji && m.emoji) ? '18px' : '11px'};`;
+      av.textContent = (showEmoji && m.emoji) ? m.emoji : initials(m.name);
+      const info = document.createElement('div');
+      info.className = 'member-info';
+      const nameEl = document.createElement('div');
+      nameEl.className = 'member-name';
+      nameEl.textContent = m.name;
+      info.appendChild(nameEl);
+      const sub = [m.title, m.email].filter(Boolean).join(' · ');
+      if (sub) {
+        const subEl = document.createElement('div');
+        subEl.className = 'member-sub';
+        subEl.textContent = sub;
+        info.appendChild(subEl);
+      }
+      const actions = document.createElement('div');
+      actions.className = 'member-actions';
+      const editBtn = document.createElement('button');
+      editBtn.className = 'proj-card-edit';
+      editBtn.textContent = 'Edit';
+      editBtn.addEventListener('click', () => openMemberModal(m));
+      actions.appendChild(editBtn);
+      row.appendChild(av);
+      row.appendChild(info);
+      row.appendChild(actions);
+      list.appendChild(row);
+    });
+    tmSection.appendChild(list);
+  }
+  body.appendChild(tmSection);
+
+  // Divider
+  const div = document.createElement('div');
+  div.className = 'settings-divider';
+  body.appendChild(div);
+
+  // Preferences
+  const prefSection = document.createElement('div');
+  prefSection.className = 'settings-section';
+  const prefHdr = document.createElement('div');
+  prefHdr.className = 'settings-section-hdr';
+  const prefTitle = document.createElement('div');
+  prefTitle.className = 'settings-section-title';
+  prefTitle.textContent = 'Preferences';
+  prefHdr.appendChild(prefTitle);
+  prefSection.appendChild(prefHdr);
+
+  const prefRow = document.createElement('div');
+  prefRow.className = 'pref-row';
+  const toggle = document.createElement('button');
+  toggle.className = 'pref-toggle' + (showEmoji ? ' on' : '');
+  toggle.textContent = showEmoji ? 'ON' : 'OFF';
+  toggle.addEventListener('click', () => {
+    localStorage.setItem('spd:show-emoji', String(!showEmoji));
+    render();
+  });
+  const prefText = document.createElement('div');
+  const prefLabel = document.createElement('div');
+  prefLabel.className = 'pref-label';
+  prefLabel.textContent = 'Replace initials with emoji';
+  const prefSub = document.createElement('div');
+  prefSub.className = 'pref-sub';
+  prefSub.textContent = 'Shows each member\'s emoji in avatars across projects, calendar, and sidebar.';
+  prefText.appendChild(prefLabel);
+  prefText.appendChild(prefSub);
+  prefRow.appendChild(toggle);
+  prefRow.appendChild(prefText);
+  prefSection.appendChild(prefRow);
+  body.appendChild(prefSection);
+}
+
+// ── TEAM MEMBER MODAL ──────────────────────────────────────────────────────
+function openMemberModal(member) {
+  editingMemberId   = member?.id || null;
+  selectedMemberColor = member?.color || 'blue';
+  document.getElementById('member-modal-title').textContent = member ? 'Edit Team Member' : 'New Team Member';
+  document.getElementById('mm-name').value  = member?.name  || '';
+  document.getElementById('mm-title').value = member?.title || '';
+  document.getElementById('mm-email').value = member?.email || '';
+  document.getElementById('mm-emoji').value = member?.emoji || '';
+  document.getElementById('mm-delete').style.display = member ? 'block' : 'none';
+  buildMemberColorRow();
+  document.getElementById('member-modal').classList.add('open');
+  document.getElementById('mm-name').focus();
+}
+function closeMemberModal() { document.getElementById('member-modal').classList.remove('open'); }
+function buildMemberColorRow() {
+  const row = document.getElementById('mm-color-row');
+  row.innerHTML = '';
+  PROJECT_COLORS.forEach(c => {
+    const sw = document.createElement('div');
+    sw.className = 'cswatch' + (c.key === selectedMemberColor ? ' sel' : '');
+    sw.style.background = c.hex;
+    sw.title = c.key;
+    sw.addEventListener('click', () => {
+      selectedMemberColor = c.key;
+      row.querySelectorAll('.cswatch').forEach(s => s.classList.toggle('sel', s.title === c.key));
+    });
+    row.appendChild(sw);
+  });
+}
+document.getElementById('member-modal-x').addEventListener('click', closeMemberModal);
+document.getElementById('mm-cancel').addEventListener('click', closeMemberModal);
+document.getElementById('mm-delete').addEventListener('click', async () => {
+  closeMemberModal(); await deleteTeamMember(editingMemberId);
+});
+document.getElementById('mm-save').addEventListener('click', async () => {
+  const name = document.getElementById('mm-name').value.trim();
+  if (!name) { document.getElementById('mm-name').focus(); return; }
+  const data = {
+    name,
+    title: document.getElementById('mm-title').value.trim(),
+    email: document.getElementById('mm-email').value.trim(),
+    emoji: document.getElementById('mm-emoji').value.trim().slice(0, 2),
+    color: selectedMemberColor,
+  };
+  closeMemberModal();
+  if (editingMemberId) await updateTeamMember(editingMemberId, data);
+  else await createTeamMember(data);
+});
+
+// ── MEMBER AUTOCOMPLETE ────────────────────────────────────────────────────
+function attachMemberAutocomplete(input) {
+  let dropdown = null;
+  const remove = () => { dropdown?.remove(); dropdown = null; };
+  const show = q => {
+    remove();
+    const lower = q.toLowerCase();
+    const matches = state.teamMembers
+      .filter(m => !q || m.name.toLowerCase().includes(lower))
+      .slice(0, 8);
+    if (!matches.length) return;
+    dropdown = document.createElement('div');
+    dropdown.className = 'ac-dropdown';
+    const rect = input.getBoundingClientRect();
+    dropdown.style.cssText = `position:fixed;top:${rect.bottom + 2}px;left:${rect.left}px;width:${Math.max(rect.width, 220)}px;z-index:9500;`;
+    const showEmoji = localStorage.getItem('spd:show-emoji') === 'true';
+    matches.forEach(m => {
+      const item = document.createElement('div');
+      item.className = 'ac-item';
+      const col = PROJECT_COLORS.find(c => c.key === m.color) || PROJECT_COLORS[5];
+      const av = document.createElement('div');
+      av.className = 'ac-av';
+      av.style.cssText = `background:${col.hex}22;border:1px solid ${col.hex}55;color:${col.hex};font-size:${(showEmoji && m.emoji) ? '16px' : '10px'};`;
+      av.textContent = (showEmoji && m.emoji) ? m.emoji : initials(m.name);
+      const info = document.createElement('div');
+      info.className = 'ac-info';
+      const nameEl = document.createElement('div');
+      nameEl.className = 'ac-name';
+      nameEl.textContent = m.name;
+      info.appendChild(nameEl);
+      if (m.title) {
+        const sub = document.createElement('div');
+        sub.className = 'ac-sub';
+        sub.textContent = m.title;
+        info.appendChild(sub);
+      }
+      item.appendChild(av);
+      item.appendChild(info);
+      item.addEventListener('mousedown', e => {
+        e.preventDefault();
+        input.value = m.name;
+        remove();
+      });
+      dropdown.appendChild(item);
+    });
+    document.body.appendChild(dropdown);
+  };
+  input.addEventListener('input', () => show(input.value.trim()));
+  input.addEventListener('focus', () => show(input.value.trim()));
+  input.addEventListener('blur', () => setTimeout(remove, 150));
+}
 
 // ── SETUP MODAL ────────────────────────────────────────────────────────────
 document.getElementById('setup-sql-block').textContent = SETUP_SQL;
