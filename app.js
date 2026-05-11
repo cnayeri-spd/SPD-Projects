@@ -2082,6 +2082,28 @@ function renderSettingsPage() {
       }
       const actions = document.createElement('div');
       actions.className = 'member-actions';
+      actions.style.cssText = 'display:flex;align-items:center;gap:6px;';
+
+      const loginEmail = state.user?.email?.toLowerCase();
+      const memberEmail = m.email?.toLowerCase();
+      const isMe = loginEmail && memberEmail && loginEmail === memberEmail;
+
+      if (isMe) {
+        const youBadge = document.createElement('span');
+        youBadge.style.cssText = 'font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;background:rgba(47,158,68,.15);color:#2f9e44;border:1px solid rgba(47,158,68,.3);';
+        youBadge.textContent = 'You';
+        actions.appendChild(youBadge);
+      } else {
+        const meBtn = document.createElement('button');
+        meBtn.className = 'proj-card-edit';
+        meBtn.textContent = 'This is me';
+        meBtn.title = 'Link your login email to this profile';
+        meBtn.addEventListener('click', async () => {
+          await updateTeamMember(m.id, { email: state.user.email });
+        });
+        actions.appendChild(meBtn);
+      }
+
       const editBtn = document.createElement('button');
       editBtn.className = 'proj-card-edit';
       editBtn.textContent = 'Edit';
