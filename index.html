@@ -401,6 +401,39 @@ html,body{background:var(--bg);color:var(--text);font-family:'Inter',-apple-syst
 
 /* ── TEAM MEMBER MODAL ── */
 .mm-emoji-input{font-size:22px;text-align:center;padding:5px 10px;}
+
+/* ── STATUS POPOVER ── */
+.status-popover{position:fixed;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:4px;z-index:9500;min-width:136px;box-shadow:0 8px 24px rgba(0,0,0,.5);}
+.status-popover-item{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:3px;cursor:pointer;font-size:12px;color:var(--text);transition:background .1s;}
+.status-popover-item:hover{background:var(--surface-3);}
+.status-popover-item.current{color:var(--text-muted);cursor:default;}
+.sp-dot{width:7px;height:7px;border-radius:50%;flex:0 0 7px;}
+.del-status-dot{cursor:pointer;transition:transform .12s;}
+.del-status-dot:hover{transform:scale(1.6);}
+
+/* ── MY TASKS PAGE ── */
+#mytasks-page{display:none;flex:1;flex-direction:column;overflow:hidden;background:var(--bg);}
+#mytasks-page.show{display:flex;}
+.mt-header{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1px solid var(--border);background:var(--surface);flex:0 0 auto;gap:16px;}
+.mt-title{font-size:16px;font-weight:600;letter-spacing:-.3px;}
+.mt-subtitle{font-size:12px;color:var(--text-muted);margin-top:3px;}
+.mt-body{flex:1;overflow-y:auto;padding:20px 24px;max-width:760px;}
+.mt-section{margin-bottom:20px;}
+.mt-section-hdr{display:flex;align-items:center;gap:8px;padding:5px 0;margin-bottom:4px;border-bottom:1px solid var(--border);}
+.mt-section-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;}
+.mt-section-count{font-size:10px;color:var(--text-dim);}
+.mt-row{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:var(--radius-sm);transition:background .1s;border:1px solid transparent;}
+.mt-row:hover{background:var(--surface);border-color:var(--border);}
+.mt-row.done{opacity:.42;}
+.mt-row-title{flex:1;font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.mt-row.done .mt-row-title{text-decoration:line-through;}
+.mt-row-meta{display:flex;align-items:center;gap:6px;flex:0 0 auto;}
+.mt-proj-badge{font-size:10px;font-weight:500;padding:1px 6px;border-radius:3px;white-space:nowrap;}
+.mt-assignee{font-size:10px;color:var(--text-dim);}
+.mt-due{font-size:10px;color:var(--text-dim);white-space:nowrap;}
+.mt-due.overdue{color:var(--accent);}
+.mt-empty{color:var(--text-dim);font-size:13px;padding:48px 0;text-align:center;line-height:1.7;}
+.mt-pm-badge{font-size:10px;font-weight:600;padding:3px 10px;border-radius:10px;background:rgba(112,72,232,.15);color:#9775fa;border:1px solid rgba(112,72,232,.3);white-space:nowrap;flex:0 0 auto;}
 </style>
 </head>
 <body>
@@ -438,6 +471,8 @@ html,body{background:var(--bg);color:var(--text);font-family:'Inter',-apple-syst
       </div>
       <div class="vdivider"></div>
       <button class="icon-btn" id="view-projects-btn">Projects</button>
+      <div class="vdivider"></div>
+      <button class="icon-btn" id="view-mytasks-btn">My Tasks</button>
       <div class="vdivider"></div>
       <button class="icon-btn" id="view-settings-btn">Settings</button>
     </div>
@@ -509,6 +544,9 @@ html,body{background:var(--bg);color:var(--text);font-family:'Inter',-apple-syst
         </div>
         <div class="pp-body"><div class="settings-body" id="settings-body"></div></div>
       </div>
+
+      <!-- MY TASKS PAGE -->
+      <div id="mytasks-page"></div>
     </div>
 
     <!-- RIGHT PANEL -->

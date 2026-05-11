@@ -262,6 +262,21 @@ function formatChipTime(t) {
   return t.toUpperCase();
 }
 
+function getCurrentMember() {
+  if (!state.user?.email) return null;
+  return state.teamMembers.find(m => m.email && m.email.toLowerCase() === state.user.email.toLowerCase()) || null;
+}
+function isPM() {
+  const m = getCurrentMember();
+  return m?.title?.toLowerCase() === 'project manager';
+}
+function getMyDeliverables() {
+  if (isPM()) return state.deliverables;
+  const m = getCurrentMember();
+  if (!m) return [];
+  return state.deliverables.filter(d => d.assignee && d.assignee.toLowerCase() === m.name.toLowerCase());
+}
+
 // ── AUTH ───────────────────────────────────────────────────────────────────
 const authMsg = document.getElementById('auth-msg');
 document.getElementById('auth-email').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('auth-pw').focus(); });
@@ -452,13 +467,14 @@ async function deleteTeamMember(id) {
 // ── RENDER ─────────────────────────────────────────────────────────────────
 function render() {
   renderSidebar();
-  const noCalendar = currentView === 'projects' || currentView === 'settings';
+  const noCalendar = currentView === 'projects' || currentView === 'settings' || currentView === 'mytasks';
   document.getElementById('right-panel').style.display = noCalendar ? 'none' : '';
   document.getElementById('cal-header').style.display  = noCalendar ? 'none' : '';
   document.getElementById('cal-grid-wrap').style.display = 'none';
   document.getElementById('week-wrap').classList.remove('show');
   document.getElementById('projects-page').classList.remove('show');
   document.getElementById('settings-page').classList.remove('show');
+  document.getElementById('mytasks-page').classList.remove('show');
 
   if (currentView === 'projects') {
     document.getElementById('projects-page').classList.add('show');
@@ -466,6 +482,9 @@ function render() {
   } else if (currentView === 'settings') {
     document.getElementById('settings-page').classList.add('show');
     renderSettingsPage();
+  } else if (currentView === 'mytasks') {
+    document.getElementById('mytasks-page').classList.add('show');
+    renderMyTasksPage();
   } else {
     if (currentView === 'month')   renderMonthCalendar();
     if (currentView === 'twoweek') renderTwoWeekView();
@@ -931,7 +950,8 @@ function buildDelCard(del) {
   const dot = document.createElement('div');
   dot.className = 'del-status-dot';
   dot.style.background = st.color;
-  dot.title = st.label;
+  dot.title = `${st.label} — click to change`;
+  dot.addEventListener('click', e => { e.stopPropagation(); openStatusPopover(del.id, dot); });
   titleRow.appendChild(dot);
   titleRow.appendChild(Object.assign(document.createElement('span'), { textContent: del.title }));
   card.appendChild(titleRow);
@@ -1399,6 +1419,198 @@ function renderArchivePanel() {
   ppBody.appendChild(panel);
 }
 
+// ── STATUS POPOVER ─────────────────────────────────────────────────────────
+function openStatusPopover(delId, anchorEl) {
+  document.getElementById('status-popover')?.remove();
+  const del = state.deliverables.find(d => d.id === delId);
+  if (!del) return;
+
+  const pop = document.createElement('div');
+  pop.id = 'status-popover';
+  pop.className = 'status-popover';
+
+  Object.entries(STATUSES).forEach(([key, st]) => {
+    const isCurrent = del.status === key;
+    const item = document.createElement('div');
+    item.className = 'status-popover-item' + (isCurrent ? ' current' : '');
+    const dot = document.createElement('div');
+    dot.className = 'sp-dot';
+    dot.style.background = st.color;
+    const label = document.createElement('span');
+    label.textContent = st.label;
+    item.appendChild(dot);
+    item.appendChild(label);
+    if (!isCurrent) {
+      item.addEventListener('click', async e => {
+        e.stopPropagation();
+        pop.remove();
+        await updateDeliverable(delId, { status: key });
+      });
+    }
+    pop.appendChild(item);
+  });
+
+  const rect = anchorEl.getBoundingClientRect();
+  pop.style.top  = Math.min(rect.bottom + 4, window.innerHeight - 190) + 'px';
+  pop.style.left = Math.min(rect.left, window.innerWidth - 148) + 'px';
+  document.body.appendChild(pop);
+
+  setTimeout(() => {
+    document.addEventListener('click', function close() {
+      document.getElementById('status-popover')?.remove();
+      document.removeEventListener('click', close);
+    });
+  }, 10);
+}
+
+// ── MY TASKS PAGE ──────────────────────────────────────────────────────────
+const MY_TASKS_STATUS_ORDER = ['blocked', 'in_progress', 'review', 'not_started', 'done'];
+
+function renderMyTasksPage() {
+  const page = document.getElementById('mytasks-page');
+  page.innerHTML = '';
+
+  const member = getCurrentMember();
+  const pm = isPM();
+  const myDels = getMyDeliverables();
+
+  const hdr = document.createElement('div');
+  hdr.className = 'mt-header';
+
+  const titleBlock = document.createElement('div');
+  const titleEl = document.createElement('div');
+  titleEl.className = 'mt-title';
+  titleEl.textContent = 'My Tasks';
+  titleBlock.appendChild(titleEl);
+  const sub = document.createElement('div');
+  sub.className = 'mt-subtitle';
+  if (!member) {
+    sub.textContent = 'No team member matched to your login — add your email in Settings → Team Members.';
+  } else if (pm) {
+    sub.textContent = member.name;
+  } else {
+    sub.textContent = `${member.name} · ${myDels.length} task${myDels.length !== 1 ? 's' : ''}`;
+  }
+  titleBlock.appendChild(sub);
+  hdr.appendChild(titleBlock);
+
+  if (pm) {
+    const badge = document.createElement('span');
+    badge.className = 'mt-pm-badge';
+    badge.textContent = 'Project Manager — all tasks';
+    hdr.appendChild(badge);
+  }
+  page.appendChild(hdr);
+
+  const body = document.createElement('div');
+  body.className = 'mt-body';
+
+  if (!member) {
+    const empty = document.createElement('div');
+    empty.className = 'mt-empty';
+    empty.innerHTML = 'Go to <strong>Settings → Team Members</strong> and add your login email to your profile<br>to see tasks assigned to you here.';
+    body.appendChild(empty);
+    page.appendChild(body);
+    return;
+  }
+
+  if (myDels.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'mt-empty';
+    empty.textContent = 'No tasks assigned to you.';
+    body.appendChild(empty);
+    page.appendChild(body);
+    return;
+  }
+
+  MY_TASKS_STATUS_ORDER.forEach(statusKey => {
+    const group = myDels.filter(d => d.status === statusKey);
+    if (group.length === 0) return;
+    const st = STATUSES[statusKey];
+
+    const section = document.createElement('div');
+    section.className = 'mt-section';
+
+    const secHdr = document.createElement('div');
+    secHdr.className = 'mt-section-hdr';
+    const secDot = document.createElement('div');
+    secDot.className = 'sp-dot';
+    secDot.style.background = st.color;
+    const secLabel = document.createElement('span');
+    secLabel.className = 'mt-section-label';
+    secLabel.style.color = st.color;
+    secLabel.textContent = st.label;
+    const secCount = document.createElement('span');
+    secCount.className = 'mt-section-count';
+    secCount.textContent = `(${group.length})`;
+    secHdr.appendChild(secDot);
+    secHdr.appendChild(secLabel);
+    secHdr.appendChild(secCount);
+    section.appendChild(secHdr);
+
+    group
+      .sort((a, b) => {
+        if (a.due_at && b.due_at) return a.due_at.localeCompare(b.due_at);
+        if (a.due_at) return -1;
+        if (b.due_at) return 1;
+        return a.title.localeCompare(b.title);
+      })
+      .forEach(d => section.appendChild(buildMyTaskRow(d, pm)));
+
+    body.appendChild(section);
+  });
+
+  page.appendChild(body);
+}
+
+function buildMyTaskRow(d, showAssignee) {
+  const proj = state.projects.find(p => p.id === d.project_id);
+  const col  = colorOf(proj);
+  const st   = STATUSES[d.status] || STATUSES.not_started;
+  const overdue = isOverdue(d.due_at) && d.status !== 'done';
+
+  const row = document.createElement('div');
+  row.className = 'mt-row' + (d.status === 'done' ? ' done' : '');
+
+  const dot = document.createElement('div');
+  dot.className = 'del-status-dot';
+  dot.style.cssText = `background:${st.color};flex:0 0 7px;width:7px;height:7px;border-radius:50%;`;
+  dot.title = `${st.label} — click to change`;
+  dot.addEventListener('click', e => { e.stopPropagation(); openStatusPopover(d.id, dot); });
+
+  const title = document.createElement('div');
+  title.className = 'mt-row-title';
+  title.textContent = d.title;
+
+  const meta = document.createElement('div');
+  meta.className = 'mt-row-meta';
+
+  if (proj) {
+    const badge = document.createElement('span');
+    badge.className = 'mt-proj-badge';
+    badge.style.cssText = `background:${col.bg};color:${col.hex};`;
+    badge.textContent = proj.name;
+    meta.appendChild(badge);
+  }
+  if (showAssignee && d.assignee) {
+    const a = document.createElement('span');
+    a.className = 'mt-assignee';
+    a.textContent = d.assignee;
+    meta.appendChild(a);
+  }
+  if (d.due_at) {
+    const due = document.createElement('span');
+    due.className = 'mt-due' + (overdue ? ' overdue' : '');
+    due.textContent = formatShort(d.due_at);
+    meta.appendChild(due);
+  }
+
+  row.appendChild(dot);
+  row.appendChild(title);
+  row.appendChild(meta);
+  return row;
+}
+
 // ── CONTEXT MENU ───────────────────────────────────────────────────────────
 function openCtxMenu(x, y, ds) {
   closeCtxMenu();
@@ -1428,7 +1640,7 @@ function closeCtxMenu() {
 }
 document.addEventListener('click', closeCtxMenu);
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { closeCtxMenu(); closeProjModal(); closeDelModal(); closeEventModal(); }
+  if (e.key === 'Escape') { closeCtxMenu(); closeProjModal(); closeDelModal(); closeEventModal(); document.getElementById('status-popover')?.remove(); }
 });
 
 // ── PROJECT MODAL ──────────────────────────────────────────────────────────
@@ -1799,6 +2011,7 @@ function setView(v) {
   document.getElementById('view-2wk-btn').classList.toggle('active', v === 'twoweek');
   document.getElementById('view-week-btn').classList.toggle('active', v === 'week');
   document.getElementById('view-projects-btn').classList.toggle('active', v === 'projects');
+  document.getElementById('view-mytasks-btn').classList.toggle('active', v === 'mytasks');
   document.getElementById('view-settings-btn').classList.toggle('active', v === 'settings');
   render();
 }
@@ -1812,6 +2025,7 @@ document.getElementById('view-week-btn').addEventListener('click', () => {
   setView('week');
 });
 document.getElementById('view-projects-btn').addEventListener('click', () => setView('projects'));
+document.getElementById('view-mytasks-btn').addEventListener('click', () => setView('mytasks'));
 document.getElementById('view-settings-btn').addEventListener('click', () => setView('settings'));
 
 // ── SETTINGS PAGE ──────────────────────────────────────────────────────────
