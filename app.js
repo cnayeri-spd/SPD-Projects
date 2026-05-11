@@ -950,14 +950,21 @@ function buildDelCard(del) {
   const dot = document.createElement('div');
   dot.className = 'del-status-dot';
   dot.style.background = st.color;
-  dot.title = `${st.label} — click to change`;
-  dot.addEventListener('click', e => { e.stopPropagation(); openStatusPopover(del.id, dot); });
+  dot.title = st.label;
   titleRow.appendChild(dot);
   titleRow.appendChild(Object.assign(document.createElement('span'), { textContent: del.title }));
   card.appendChild(titleRow);
 
   const meta = document.createElement('div');
   meta.className = 'del-card-meta';
+
+  const stPill = document.createElement('div');
+  stPill.className = 'del-status-summary-badge';
+  stPill.style.cssText = `background:${st.color}20;color:${st.color};border:1px solid ${st.color}40;cursor:pointer;`;
+  stPill.textContent = st.label;
+  stPill.title = 'Change status';
+  stPill.addEventListener('click', e => { e.stopPropagation(); openStatusPopover(del.id, stPill); });
+  meta.appendChild(stPill);
 
   if (proj) {
     const badge = document.createElement('div');
@@ -1572,18 +1579,20 @@ function buildMyTaskRow(d, showAssignee) {
   const row = document.createElement('div');
   row.className = 'mt-row' + (d.status === 'done' ? ' done' : '');
 
-  const dot = document.createElement('div');
-  dot.className = 'del-status-dot';
-  dot.style.cssText = `background:${st.color};flex:0 0 7px;width:7px;height:7px;border-radius:50%;`;
-  dot.title = `${st.label} — click to change`;
-  dot.addEventListener('click', e => { e.stopPropagation(); openStatusPopover(d.id, dot); });
-
   const title = document.createElement('div');
   title.className = 'mt-row-title';
   title.textContent = d.title;
 
   const meta = document.createElement('div');
   meta.className = 'mt-row-meta';
+
+  const stPill = document.createElement('span');
+  stPill.className = 'del-status-summary-badge';
+  stPill.style.cssText = `background:${st.color}20;color:${st.color};border:1px solid ${st.color}40;cursor:pointer;`;
+  stPill.textContent = st.label;
+  stPill.title = 'Change status';
+  stPill.addEventListener('click', e => { e.stopPropagation(); openStatusPopover(d.id, stPill); });
+  meta.appendChild(stPill);
 
   if (proj) {
     const badge = document.createElement('span');
@@ -1605,7 +1614,6 @@ function buildMyTaskRow(d, showAssignee) {
     meta.appendChild(due);
   }
 
-  row.appendChild(dot);
   row.appendChild(title);
   row.appendChild(meta);
   return row;
